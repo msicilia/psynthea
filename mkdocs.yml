@@ -1,0 +1,62 @@
+site_name: psynthea
+site_description: Python-native, Synthea-compatible synthetic patient generator with ground-truth labels and OMOP CDM output
+repo_url: https://github.com/msicilia/psynthea
+repo_name: msicilia/psynthea
+docs_dir: docs
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - toc.follow
+  palette:
+    - scheme: default
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - scheme: slate
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - tables
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Installation: getting-started/installation.md
+      - Quick start: getting-started/quickstart.md
+  - Concepts:
+      - Why psynthea: concepts/overview.md
+      - Modules & the engine: concepts/modules.md
+      - Ground-truth labels: concepts/ground-truth.md
+      - Calibration: concepts/calibration.md
+      - The observation model: concepts/observation.md
+  - Guides:
+      - Generate a labeled benchmark: guides/benchmark.md
+      - Calibrate to registry rates: guides/calibrate.md
+      - Conditional & cohort generation: guides/cohorts.md
+      - Evaluate fidelity, utility, privacy: guides/evaluation.md
+      - Authoring modules (DSL): guides/authoring.md
+  - Reference:
+      - CLI: reference/cli.md
+      - Output formats: reference/output-formats.md
+      - Synthea compatibility: reference/synthea-compat.md

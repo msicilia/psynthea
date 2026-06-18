@@ -1,0 +1,68 @@
+{
+  "name": "otitis_media",
+  "remarks": [
+    "Simplified demonstration module for psynthea Phase 1.",
+    "Written in Synthea GMF JSON to exercise the importer. Uses ATC for the",
+    "medication code (European terminology, ADR-006) instead of US RxNorm."
+  ],
+  "states": {
+    "Initial": {
+      "type": "Initial",
+      "direct_transition": "Annual_Check"
+    },
+    "Annual_Check": {
+      "type": "Delay",
+      "range": { "low": 1, "high": 1, "unit": "years" },
+      "complex_transition": [
+        {
+          "condition": { "condition_type": "Age", "operator": "<", "quantity": 8, "unit": "years" },
+          "distributions": [
+            { "transition": "Ear_Infection_Encounter", "distribution": 0.3 },
+            { "transition": "Annual_Check", "distribution": 0.7 }
+          ]
+        },
+        { "transition": "Annual_Check" }
+      ]
+    },
+    "Ear_Infection_Encounter": {
+      "type": "Encounter",
+      "encounter_class": "ambulatory",
+      "codes": [
+        { "system": "SNOMED-CT", "code": "185345009", "display": "Encounter for symptom" }
+      ],
+      "direct_transition": "Diagnose_Otitis_Media"
+    },
+    "Diagnose_Otitis_Media": {
+      "type": "ConditionOnset",
+      "target_encounter": "Ear_Infection_Encounter",
+      "assign_to_attribute": "otitis_media",
+      "codes": [
+        { "system": "SNOMED-CT", "code": "65363002", "display": "Otitis media" }
+      ],
+      "direct_transition": "Prescribe_Amoxicillin"
+    },
+    "Prescribe_Amoxicillin": {
+      "type": "MedicationOrder",
+      "codes": [
+        { "system": "ATC", "code": "J01CA04", "display": "Amoxicillin" }
+      ],
+      "direct_transition": "End_Encounter"
+    },
+    "End_Encounter": {
+      "type": "EncounterEnd",
+      "direct_transition": "Resolve"
+    },
+    "Resolve": {
+      "type": "Delay",
+      "range": { "low": 14, "high": 28, "unit": "days" },
+      "direct_transition": "Cure_Otitis_Media"
+    },
+    "Cure_Otitis_Media": {
+      "type": "ConditionEnd",
+      "codes": [
+        { "system": "SNOMED-CT", "code": "65363002", "display": "Otitis media" }
+      ],
+      "direct_transition": "Annual_Check"
+    }
+  }
+}
