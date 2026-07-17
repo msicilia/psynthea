@@ -9,8 +9,9 @@ from pathlib import Path
 
 from psynthea.compat import load_module_file, save_module_file
 from psynthea.demographics import DemographicProfile
+from psynthea.keystone import default_keystone
 from psynthea.engine import Generator, GeneratorConfig
-from psynthea.export import export_csv, export_ground_truth, export_omop
+from psynthea.export import apply_history_window, export_csv, export_ground_truth, export_omop
 from psynthea.ir.module import Module
 
 
@@ -51,8 +52,14 @@ def _cmd_generate(args: argparse.Namespace) -> int:
         min_age=args.min_age,
         max_age=args.max_age,
         profile=_load_profile(args.profile_file) if args.profile_file else None,
+        wellness_encounters=args.wellness_encounters,
+        vitals=args.vitals,
+        mortality=args.mortality,
+        keystone=default_keystone if args.keystone else None,
     )
     people = Generator(modules, config).run()
+    if args.years_of_history is not None:
+        apply_history_window(people, end_date, args.years_of_history)
     exporter = export_omop if args.format == "omop" else export_csv
     counts = exporter(people, args.output)
     if args.ground_truth:
@@ -101,6 +108,20 @@ def build_parser() -> argparse.ArgumentParser:
     gen.add_argument("--profile-file", default=None,
                      help="JSON demographic profile {\"bands\":[[min,max,w_male,w_female],...]} "
                           "to match a target age/sex structure (overrides --min/max-age)")
+    gen.add_argument("--years-of-history", type=float, default=None,
+                     help="export only the last N years of each record (Synthea's "
+                          "exporter.years_of_history; use 10 to reproduce Synthea's default)")
+    gen.add_argument("--wellness-encounters", action="store_true",
+                     help="schedule periodic wellness visits (needed for modules that "
+                          "wait for scheduled checkups; on for Synthea-like ensembles)")
+    gen.add_argument("--vitals", action="store_true",
+                     help="generate physiological vital signs (height/weight/BMI/BP); "
+                          "recorded as observations at wellness visits")
+    gen.add_argument("--mortality", action="store_true",
+                     help="apply a background age/sex death hazard (patients may die)")
+    gen.add_argument("--keystone", action="store_true",
+                     help="seed default demographic + behavioral attributes that Synthea's "
+                          "lifecycle sets (race, ethnicity, socioeconomic status, smoker, alcoholic)")
     gen.add_argument("--end-date", default=None, help="simulation end date (YYYY-MM-DD)")
     gen.set_defaults(func=_cmd_generate)
 

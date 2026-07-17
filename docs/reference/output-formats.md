@@ -15,6 +15,9 @@ Synthea-like flat tables:
 | `conditions.csv` | diagnoses |
 | `medications.csv` | prescriptions |
 | `observations.csv` | measurements |
+| `devices.csv` | implanted/used devices |
+| `imaging_studies.csv` | imaging studies |
+| `supplies.csv` | medical supplies |
 
 ## `--format omop` — OMOP CDM v5.4
 

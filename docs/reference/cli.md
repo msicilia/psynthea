@@ -25,6 +25,11 @@ Generate a synthetic cohort from one or more modules.
 | `--min-age FLOAT` | `0.0` | Minimum patient age (years) at the end date. |
 | `--max-age FLOAT` | `100.0` | Maximum patient age (years) at the end date. |
 | `--profile-file PATH` | — | JSON demographic profile to match a target age/sex structure (overrides `--min/max-age`). |
+| `--years-of-history N` | — | Export only the last N years of each record (Synthea's `exporter.years_of_history`; use `10` to reproduce Synthea's default). |
+| `--wellness-encounters` | off | Schedule periodic wellness visits (needed for modules that wait for scheduled checkups). |
+| `--vitals` | off | Generate physiological vital signs (height/weight/BMI/BP); recorded at wellness visits. |
+| `--mortality` | off | Apply a background age/sex death hazard (patients may die during simulation). |
+| `--keystone` | off | Seed the demographic + behavioral attributes Synthea's lifecycle sets (`race`, `ethnicity`, `socioeconomic_status`, `smoker`, `alcoholic`). |
 | `--end-date YYYY-MM-DD` | today | Simulation end date. |
 
 The `--profile-file` JSON is a list of `(min_age, max_age, weight_male, weight_female)`

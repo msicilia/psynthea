@@ -7,6 +7,7 @@ corrupt any fidelity claim. The one deliberate exception is billing/cost metadat
 """
 from __future__ import annotations
 
+import csv
 import json
 from pathlib import Path
 
@@ -118,6 +119,13 @@ def _parse_transition(d: dict) -> T.Transition | None:
             for e in d["conditional_transition"]
         ]
         return T.ConditionalTransition(branches)
+    if "alt_direct_transition" in d:
+        return T.DirectTransition(d["alt_direct_transition"])
+    if "type_of_care_transition" in d:
+        # psynthea has no explicit care-setting model; route to ambulatory (else any).
+        routes = d["type_of_care_transition"]
+        target = routes.get("ambulatory") or next(iter(routes.values()), None)
+        return T.DirectTransition(target) if target else None
     if "complex_transition" in d:
         branches: list[tuple[L.Logic | None, object]] = []
         for e in d["complex_transition"]:
@@ -130,6 +138,11 @@ def _parse_transition(d: dict) -> T.Transition | None:
                 raise NotSupportedError("complex_transition entry without transition/distributions")
             branches.append((condition, payload))
         return T.ComplexTransition(branches)
+    if "lookup_table_transition" in d:
+        entries = d["lookup_table_transition"]
+        choices = [(e["transition"], float(e.get("default_probability", 0.0))) for e in entries]
+        table_name = entries[0].get("lookup_table_name", "") if entries else ""
+        return T.LookupTableTransition(choices=choices, table_name=table_name)
     return None
 
 
@@ -188,10 +201,7 @@ def _scalar_value(d: dict) -> float:
     return 0.0
 
 
-_PASSTHROUGH_TYPES = {
-    "ImagingStudy", "Device", "DeviceEnd", "SupplyList", "DiagnosticReport",
-    "MultiObservation", "CallSubmodule", "Telemedicine",
-}
+_PASSTHROUGH_TYPES = {"Telemedicine"}
 
 
 def _end_state(kind: str, name: str, d: dict, tr, cls, ref_key: str):
@@ -282,6 +292,38 @@ def _parse_state(name: str, d: dict) -> S.State:
                                target_encounter=d.get("target_encounter"))
     if kind == "CarePlanEnd":
         return S.CarePlanEnd(name=name, transition=tr, codes=_parse_codes(d.get("codes", [])))
+    if kind == "CallSubmodule":
+        return S.CallSubmodule(name=name, transition=tr, submodule_name=d.get("submodule", ""))
+    if kind in ("MultiObservation", "DiagnosticReport"):
+        components = [_parse_observation(f"{name}_c{i}", o, None)
+                     for i, o in enumerate(d.get("observations", []))]
+        cls = S.MultiObservation if kind == "MultiObservation" else S.DiagnosticReport
+        return cls(name=name, transition=tr, codes=_parse_codes(d.get("codes", [])),
+                   category=d.get("category", ""), components=components)
+    if kind == "Device":
+        return S.Device(name=name, transition=tr,
+                        code=Code.from_dict(d["code"]) if "code" in d else None)
+    if kind == "DeviceEnd":
+        code = None
+        if "code" in d:
+            code = Code.from_dict(d["code"])
+        elif d.get("codes"):
+            code = _parse_codes(d["codes"])[0]
+        return S.DeviceEnd(name=name, transition=tr, code=code)
+    if kind == "ImagingStudy":
+        proc = Code.from_dict(d["procedure_code"]) if "procedure_code" in d else None
+        series = d.get("series") or []
+        modality, body_site = "", None
+        if series:
+            m, bs = series[0].get("modality"), series[0].get("body_site")
+            modality = (m.get("code", "") if isinstance(m, dict) else "") or ""
+            body_site = Code.from_dict(bs) if isinstance(bs, dict) else None
+        return S.ImagingStudy(name=name, transition=tr, procedure_code=proc,
+                              modality=modality, body_site=body_site)
+    if kind == "SupplyList":
+        supplies = [(Code.from_dict(s["code"]), s.get("quantity", 1))
+                    for s in d.get("supplies", []) if "code" in s]
+        return S.SupplyList(name=name, transition=tr, supplies=supplies)
     if kind in _PASSTHROUGH_TYPES:
         return S.Passthrough(name=name, transition=tr,
                              assign_to_attribute=d.get("assign_to_attribute"), gmf_type=kind)
@@ -314,3 +356,98 @@ def load_module_file(path: str | Path) -> Module:
     with path.open(encoding="utf-8") as fh:
         data = json.load(fh)
     return load_module_dict(data, name=data.get("name") or path.stem)
+
+
+def _fill_lookup_table(tr: "T.LookupTableTransition", csv_path: Path) -> None:
+    """Populate a LookupTableTransition's rows from its CSV; leave empty if missing
+    (the transition then falls back to per-target default probabilities)."""
+    if not csv_path.exists():
+        return
+    targets = {t for t, _ in tr.choices}
+    with csv_path.open(newline="", encoding="utf-8") as fh:
+        reader = csv.reader(fh)
+        header = [h.strip() for h in next(reader)]
+        input_cols = [h for h in header if h not in targets]
+        rows: list[tuple[dict, dict]] = []
+        for raw in reader:
+            if not raw or not any(cell.strip() for cell in raw):
+                continue
+            cells = dict(zip(header, raw))
+            inputs = {c: cells.get(c, "") for c in input_cols}
+            probs: dict[str, float] = {}
+            for t in targets:
+                try:
+                    probs[t] = float(cells.get(t, 0.0))
+                except ValueError:
+                    probs[t] = 0.0
+            rows.append((inputs, probs))
+    tr.input_columns = input_cols
+    tr.rows = rows
+
+
+def load_module_with_submodules(path: str | Path, modules_dir: str | Path,
+                                *, name: str | None = None) -> Module:
+    """Load a module and resolve its ``CallSubmodule`` references from ``modules_dir``.
+
+    Submodules are referenced by path relative to ``modules_dir`` (e.g.
+    ``"medications/otc_pain_reliever"`` -> ``<modules_dir>/medications/…​.json``),
+    resolved transitively and shared/cycle-safe. A reference whose file is missing is
+    left unresolved (the executor treats it as a no-op), so partial module trees still
+    run.
+    """
+    modules_dir = Path(modules_dir)
+    registry: dict[str, Module | None] = {}
+
+    def _resolve(module: Module) -> None:
+        for st in module.states.values():
+            if isinstance(st, S.CallSubmodule) and st.submodule_name and st.submodule is None:
+                st.submodule = _load_ref(st.submodule_name)
+            tr = getattr(st, "transition", None)
+            if isinstance(tr, T.LookupTableTransition) and tr.table_name and not tr.rows:
+                _fill_lookup_table(tr, modules_dir / "lookup_tables" / tr.table_name)
+
+    def _load_ref(ref: str) -> Module | None:
+        if ref in registry:
+            return registry[ref]
+        sub_path = modules_dir / f"{ref}.json"
+        if not sub_path.exists():
+            registry[ref] = None
+            return None
+        with sub_path.open(encoding="utf-8") as fh:
+            data = json.load(fh)
+        sub = load_module_dict(data, name=data.get("name") or ref)
+        registry[ref] = sub          # register before recursing (cycle-safe)
+        _resolve(sub)
+        return sub
+
+    path = Path(path)
+    with path.open(encoding="utf-8") as fh:
+        data = json.load(fh)
+    top = load_module_dict(data, name=name or data.get("name") or path.stem)
+    _resolve(top)
+    return top
+
+
+def load_all_modules(modules_dir: str | Path, *, names: list[str] | None = None,
+                     skip_unsupported: bool = True) -> list[Module]:
+    """Load the whole top-level module set (each with submodules + lookup tables
+    resolved) for running as an ensemble, so cross-module attributes set by one module
+    are visible to others (as in Synthea). Top-level modules are the ``*.json`` files in
+    ``modules_dir`` root; submodules live in subdirectories and load on demand.
+
+    With ``skip_unsupported`` (default), modules that hit an unsupported construct on
+    import are skipped rather than aborting the whole load.
+    """
+    modules_dir = Path(modules_dir)
+    if names is not None:
+        files = [modules_dir / f"{n}.json" for n in names]
+    else:
+        files = sorted(p for p in modules_dir.glob("*.json"))
+    modules: list[Module] = []
+    for f in files:
+        try:
+            modules.append(load_module_with_submodules(f, modules_dir))
+        except NotSupportedError:
+            if not skip_unsupported:
+                raise
+    return modules

@@ -5,8 +5,9 @@ the name of the next state (or ``None`` when there is nowhere to go).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
+from psynthea import _timeutil
 from psynthea.ir.logic import Logic
 
 
@@ -71,3 +72,65 @@ class ComplexTransition(Transition):
                     return payload.follow(person, time, ctx)
                 return payload
         return None
+
+
+def _cell_matches(cell: str, value) -> bool:
+    """Match a lookup-table input cell against a patient value: ``*`` is a wildcard,
+    ``lo-hi`` a numeric range (inclusive), otherwise an exact (string) match."""
+    cell = cell.strip()
+    if cell in ("", "*"):
+        return True
+    if "-" in cell[1:]:  # a range like 6-103 (allow a leading '-' for negatives, rare)
+        lo, _, hi = cell.partition("-")
+        try:
+            return float(lo) <= float(value) <= float(hi)
+        except (TypeError, ValueError):
+            return False
+    try:  # exact numeric
+        return float(cell) == float(value)
+    except (TypeError, ValueError):
+        return str(value) == cell
+
+
+@dataclass
+class LookupTableTransition(Transition):
+    """CSV-table-driven transition (Synthea ``lookup_table_transition``): the patient's
+    attributes select a table row, whose per-target probabilities drive the draw.
+
+    Input columns are matched against the patient (``age`` -> years, ``gender`` -> sex,
+    any other -> a patient attribute); output columns are named for the transition
+    targets. ``rows``/``input_columns`` are filled at load time from the CSV; until then
+    (or if no row matches) the per-target ``default_probability`` weights are used.
+    """
+    choices: list[tuple[str, float]] = field(default_factory=list)   # (target, default_prob)
+    table_name: str = ""
+    input_columns: list[str] = field(default_factory=list)
+    rows: list[tuple[dict, dict]] = field(default_factory=list)      # (inputs, {target: prob})
+
+    def _match(self, person, time) -> dict | None:
+        if not self.rows:
+            return None
+        for inputs, probs in self.rows:
+            if all(self._value_matches(col, cell, person, time)
+                   for col, cell in inputs.items()):
+                return probs
+        return None
+
+    @staticmethod
+    def _value_matches(col: str, cell: str, person, time) -> bool:
+        key = col.strip().lower()
+        if key == "age":
+            value = _timeutil.age_in(person.birthdate, time, "years")
+        elif key == "gender":
+            value = person.gender
+        else:
+            value = person.attributes.get(col)
+        return _cell_matches(cell, value)
+
+    def follow(self, person, time, ctx) -> str | None:
+        probs = self._match(person, time)
+        if probs is None:
+            weighted = list(self.choices)                      # fall back to defaults
+        else:
+            weighted = [(t, probs.get(t, 0.0)) for t, _ in self.choices]
+        return _sample_weighted(weighted, person.rng)

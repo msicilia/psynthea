@@ -139,6 +139,10 @@ def _dump_transition(tr: T.Transition | None) -> dict:
                 e["transition"] = payload
             entries.append(e)
         return {"complex_transition": entries}
+    if isinstance(tr, T.LookupTableTransition):
+        return {"lookup_table_transition": [
+            {"transition": t, "default_probability": p, "lookup_table_name": tr.table_name}
+            for t, p in tr.choices]}
     raise ExportError(f"cannot serialize transition {type(tr).__name__}")
 
 
@@ -244,6 +248,45 @@ def _dump_state_body(st: S.State) -> dict:
         return _with_assign({"type": "CarePlanStart", "codes": _dump_codes(st.codes)}, st)
     if isinstance(st, S.CarePlanEnd):
         return {"type": "CarePlanEnd", "codes": _dump_codes(st.codes)}
+    if isinstance(st, (S.MultiObservation, S.DiagnosticReport)):
+        gmf_type = "MultiObservation" if isinstance(st, S.MultiObservation) else "DiagnosticReport"
+        d = {"type": gmf_type, "codes": _dump_codes(st.codes)}
+        if st.category:
+            d["category"] = st.category
+        components = []
+        for comp in st.components:
+            o = _dump_observation(comp)
+            o.pop("type", None)
+            components.append(o)
+        d["observations"] = components
+        return d
+    if isinstance(st, S.Device):
+        d = {"type": "Device"}
+        if st.code is not None:
+            d["code"] = _dump_code(st.code)
+        return d
+    if isinstance(st, S.DeviceEnd):
+        d = {"type": "DeviceEnd"}
+        if st.code is not None:
+            d["code"] = _dump_code(st.code)
+        return d
+    if isinstance(st, S.ImagingStudy):
+        series: dict = {}
+        if st.modality:
+            series["modality"] = {"system": "DICOM-DCM", "code": st.modality, "display": ""}
+        if st.body_site is not None:
+            series["body_site"] = _dump_code(st.body_site)
+        d = {"type": "ImagingStudy"}
+        if st.procedure_code is not None:
+            d["procedure_code"] = _dump_code(st.procedure_code)
+        d["series"] = [series] if series else []
+        return d
+    if isinstance(st, S.SupplyList):
+        return {"type": "SupplyList",
+                "supplies": [{"quantity": qty, "code": _dump_code(code)}
+                             for code, qty in st.supplies]}
+    if isinstance(st, S.CallSubmodule):
+        return {"type": "CallSubmodule", "submodule": st.submodule_name}
     if isinstance(st, S.Passthrough):
         d = {"type": st.gmf_type}
         if st.assign_to_attribute:

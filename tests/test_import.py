@@ -47,12 +47,23 @@ def test_unsupported_logic_type_raises():
         load_module_dict(data)
 
 
-def test_passthrough_types_import():
-    # previously-unsupported states now parse (executed as no-ops) for compatibility
+def test_imagingstudy_is_now_a_real_state():
+    # ImagingStudy is executed (no longer a no-op passthrough)
     data = {"states": {
         "Initial": {"type": "Initial", "direct_transition": "Img"},
         "Img": {"type": "ImagingStudy", "direct_transition": "Terminal"},
         "Terminal": {"type": "Terminal"},
     }}
     module = load_module_dict(data)
-    assert isinstance(module.states["Img"], S.Passthrough)
+    assert isinstance(module.states["Img"], S.ImagingStudy)
+
+
+def test_passthrough_types_import():
+    # the remaining no-op passthrough type still parses (executed as a no-op)
+    data = {"states": {
+        "Initial": {"type": "Initial", "direct_transition": "T"},
+        "T": {"type": "Telemedicine", "direct_transition": "Terminal"},
+        "Terminal": {"type": "Terminal"},
+    }}
+    module = load_module_dict(data)
+    assert isinstance(module.states["T"], S.Passthrough)

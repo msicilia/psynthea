@@ -91,6 +91,37 @@ class AllergyEntry:
     source_state: str | None = None
 
 
+@dataclass
+class DeviceEntry:
+    code: Code | None
+    start: datetime
+    stop: datetime | None = None
+    encounter: EncounterEntry | None = None
+    source_module: str | None = None
+    source_state: str | None = None
+
+
+@dataclass
+class ImagingStudyEntry:
+    procedure_code: Code | None
+    modality: str
+    body_site: Code | None
+    date: datetime
+    encounter: EncounterEntry | None = None
+    source_module: str | None = None
+    source_state: str | None = None
+
+
+@dataclass
+class SupplyEntry:
+    code: Code | None
+    quantity: float
+    date: datetime
+    encounter: EncounterEntry | None = None
+    source_module: str | None = None
+    source_state: str | None = None
+
+
 class HealthRecord:
     def __init__(self, person_id: str) -> None:
         self.person_id = person_id
@@ -101,6 +132,9 @@ class HealthRecord:
         self.procedures: list[ProcedureEntry] = []
         self.immunizations: list[ImmunizationEntry] = []
         self.allergies: list[AllergyEntry] = []
+        self.devices: list[DeviceEntry] = []
+        self.imaging_studies: list[ImagingStudyEntry] = []
+        self.supplies: list[SupplyEntry] = []
         self.careplans: set[str] = set()          # active care-plan codes
         self.current_encounter: EncounterEntry | None = None
         self._enc_counter = 0
@@ -190,6 +224,36 @@ class HealthRecord:
 
     def active_allergy_codes(self) -> list[Code]:
         return [a.code for a in self.allergies if a.stop is None and a.code is not None]
+
+    # -- devices / imaging / supplies --------------------------------------
+    def start_device(self, code: Code | None, time: datetime,
+                     source_module: str | None = None, source_state: str | None = None) -> DeviceEntry:
+        entry = DeviceEntry(code=code, start=time, encounter=self.current_encounter,
+                            source_module=source_module, source_state=source_state)
+        self.devices.append(entry)
+        return entry
+
+    def end_device(self, code: Code, time: datetime) -> None:
+        for entry in reversed(self.devices):
+            if entry.stop is None and entry.code is not None and entry.code.code == code.code:
+                entry.stop = time
+                return
+
+    def add_imaging_study(self, procedure_code: Code | None, modality: str, body_site: Code | None,
+                          time: datetime, source_module: str | None = None,
+                          source_state: str | None = None) -> ImagingStudyEntry:
+        entry = ImagingStudyEntry(procedure_code=procedure_code, modality=modality,
+                                  body_site=body_site, date=time, encounter=self.current_encounter,
+                                  source_module=source_module, source_state=source_state)
+        self.imaging_studies.append(entry)
+        return entry
+
+    def add_supply(self, code: Code | None, quantity: float, time: datetime,
+                   source_module: str | None = None, source_state: str | None = None) -> SupplyEntry:
+        entry = SupplyEntry(code=code, quantity=quantity, date=time, encounter=self.current_encounter,
+                            source_module=source_module, source_state=source_state)
+        self.supplies.append(entry)
+        return entry
 
     # -- observations ------------------------------------------------------
     def add_observation(

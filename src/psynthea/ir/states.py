@@ -94,9 +94,19 @@ class Encounter(State):
     wellness: bool = False
 
     def process(self, person, time, ctx) -> bool:
-        # Phase-1 simplification: wellness encounters are normally scheduled by a
-        # lifecycle module we don't yet run, so we create them on the spot. This
-        # lets standalone disease modules run end-to-end (documented in DESIGN.md).
+        # A `wellness: true` encounter waits for a *scheduled* wellness visit. When the
+        # generator manages wellness (see GeneratorConfig.wellness_encounters), block
+        # until a visit is active and attach to it once (so loops that wait for the
+        # next annual visit don't spin); otherwise fall back to creating one on the spot
+        # so standalone disease modules still run end-to-end.
+        if self.wellness and getattr(person, "wellness_managed", False):
+            if not person.wellness_active:
+                return False
+            key = f"{self.name}::used_wellness"
+            if ctx.scratch.get(key) == person.wellness_encounter_id:
+                return False  # already used this visit — wait for the next one
+            ctx.scratch[key] = person.wellness_encounter_id
+            return True       # attach to the active wellness encounter
         code = self.codes[0] if self.codes else None
         person.record.start_encounter(code, time, self.encounter_class,
                                       source_module=ctx.module_name, source_state=self.name)
@@ -323,13 +333,101 @@ class CarePlanEnd(State):
 
 
 @dataclass
+class Device(State):
+    code: Code | None = None
+
+    def process(self, person, time, ctx) -> bool:
+        person.record.start_device(self.code, time,
+                                   source_module=ctx.module_name, source_state=self.name)
+        return True
+
+
+@dataclass
+class DeviceEnd(State):
+    code: Code | None = None
+
+    def process(self, person, time, ctx) -> bool:
+        if self.code is not None:
+            person.record.end_device(self.code, time)
+        return True
+
+
+@dataclass
+class ImagingStudy(State):
+    procedure_code: Code | None = None
+    modality: str = ""
+    body_site: Code | None = None
+
+    def process(self, person, time, ctx) -> bool:
+        person.record.add_imaging_study(self.procedure_code, self.modality, self.body_site, time,
+                                        source_module=ctx.module_name, source_state=self.name)
+        return True
+
+
+@dataclass
+class SupplyList(State):
+    supplies: list[tuple[Code, float]] = field(default_factory=list)   # (code, quantity)
+
+    def process(self, person, time, ctx) -> bool:
+        for code, qty in self.supplies:
+            person.record.add_supply(code, qty, time,
+                                     source_module=ctx.module_name, source_state=self.name)
+        return True
+
+
+@dataclass
+class MultiObservation(State):
+    """A panel that groups component observations (Synthea MultiObservation): emits each
+    inline component observation. The panel ``codes`` are the grouping code (recorded on
+    the components' shared encounter); flat exporters see the individual measurements."""
+    codes: list[Code] = field(default_factory=list)
+    category: str = ""
+    components: list["Observation"] = field(default_factory=list)
+
+    def process(self, person, time, ctx) -> bool:
+        for comp in self.components:
+            comp.process(person, time, ctx)
+        return True
+
+
+@dataclass
+class DiagnosticReport(State):
+    """A report bundling result observations (Synthea DiagnosticReport): emits each
+    inline component observation (e.g. the analytes of a metabolic panel)."""
+    codes: list[Code] = field(default_factory=list)
+    category: str = ""
+    components: list["Observation"] = field(default_factory=list)
+
+    def process(self, person, time, ctx) -> bool:
+        for comp in self.components:
+            comp.process(person, time, ctx)
+        return True
+
+
+@dataclass
 class Passthrough(State):
     """Imported-but-not-yet-modelled state (e.g. ImagingStudy, Device, SupplyList,
-    DiagnosticReport, MultiObservation, CallSubmodule): parsed for compatibility and
-    executed as a no-op so the module runs. Recorded honestly as a known limitation.
+    DiagnosticReport, MultiObservation): parsed for compatibility and executed as a
+    no-op so the module runs. Recorded honestly as a known limitation.
     """
     assign_to_attribute: str | None = None
     gmf_type: str = ""
 
     def process(self, person, time, ctx) -> bool:
+        return True
+
+
+@dataclass
+class CallSubmodule(State):
+    """Transfer control to a named submodule, then resume at this state's transition
+    once the submodule terminates. The submodule runs on the *same* person (shared
+    attributes and record). ``submodule`` is the resolved IR ``Module`` (filled at load
+    time); the executor special-cases this state, running the submodule across time
+    steps via a nested context until it reaches Terminal. If ``submodule`` is unresolved
+    the executor treats it as a no-op so the parent module still runs.
+    """
+    submodule_name: str = ""
+    submodule: object = None   # resolved psynthea.ir.module.Module (avoid import cycle)
+
+    def process(self, person, time, ctx) -> bool:  # pragma: no cover - executor handles it
         return True

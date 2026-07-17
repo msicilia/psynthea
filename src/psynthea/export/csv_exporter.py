@@ -38,6 +38,7 @@ def export_csv(people: list[Person], out_dir: str | Path) -> dict[str, int]:
         counts[filename] = len(rows)
 
     patients, encounters, conditions, medications, observations = [], [], [], [], []
+    devices, imaging, supplies = [], [], []
 
     for p in people:
         patients.append([p.id, _iso(p.birthdate), _iso(p.deathdate), p.gender])
@@ -55,6 +56,17 @@ def export_csv(people: list[Person], out_dir: str | Path) -> dict[str, int]:
             observations.append(
                 [_iso(o.date), p.id, _enc_id(o.encounter), code, desc, o.value, o.unit, o.category]
             )
+        for dv in p.record.devices:
+            code, desc = _code(dv.code)
+            devices.append([_iso(dv.start), _iso(dv.stop), p.id, _enc_id(dv.encounter), code, desc])
+        for im in p.record.imaging_studies:
+            pcode, pdesc = _code(im.procedure_code)
+            bcode, bdesc = _code(im.body_site)
+            imaging.append([_iso(im.date), p.id, _enc_id(im.encounter), pcode, pdesc,
+                            im.modality, bcode, bdesc])
+        for su in p.record.supplies:
+            code, desc = _code(su.code)
+            supplies.append([_iso(su.date), p.id, _enc_id(su.encounter), code, desc, su.quantity])
 
     _write("patients.csv", ["Id", "BIRTHDATE", "DEATHDATE", "GENDER"], patients)
     _write("encounters.csv",
@@ -66,4 +78,11 @@ def export_csv(people: list[Person], out_dir: str | Path) -> dict[str, int]:
     _write("observations.csv",
            ["DATE", "PATIENT", "ENCOUNTER", "CODE", "DESCRIPTION", "VALUE", "UNITS", "CATEGORY"],
            observations)
+    _write("devices.csv",
+           ["START", "STOP", "PATIENT", "ENCOUNTER", "CODE", "DESCRIPTION"], devices)
+    _write("imaging_studies.csv",
+           ["DATE", "PATIENT", "ENCOUNTER", "PROCEDURE_CODE", "PROCEDURE_DESCRIPTION",
+            "MODALITY", "BODYSITE_CODE", "BODYSITE_DESCRIPTION"], imaging)
+    _write("supplies.csv",
+           ["DATE", "PATIENT", "ENCOUNTER", "CODE", "DESCRIPTION", "QUANTITY"], supplies)
     return counts
