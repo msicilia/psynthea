@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "psynthea"
-version = "0.0.1"
+version = "0.1.0"
 description = "Python-native, Synthea-compatible synthetic patient generator with code-based modules, ground-truth labels, and OMOP CDM output"
 readme = "README.md"
 requires-python = ">=3.11"

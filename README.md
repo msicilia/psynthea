@@ -9,7 +9,7 @@ as code, **ground-truth label** emission, statistical **calibration** of modules
 aggregate (e.g. registry) rates, and **CSV / OMOP CDM** export, with a focus on
 European care.
 
-> Early release (0.0.x). The API may change.
+> Early release (0.1.x). The API may change.
 
 📖 **Documentation:** https://msicilia.github.io/psynthea
 
@@ -22,8 +22,19 @@ pip install psynthea          # or: uv pip install psynthea
 ## Highlights
 
 - **Synthea-compatible engine** — executes the Generic Module Framework and imports
-  existing GMF JSON modules (83 of 85 v3.3.0 stock modules import; a few advanced
-  state types are parsed but run as no-ops); configurable time step; no billing model.
+  existing GMF JSON modules, including **nested submodules** (`CallSubmodule`),
+  **lookup-table transitions**, **wellness-encounter scheduling**, and cross-module
+  attributes. State-type coverage is essentially complete for the v3.3.0 stock library
+  (only ODE-based `Physiology` is unsupported; `Telemedicine` runs as a no-op);
+  configurable time step; no billing model.
+- **Reproduce Synthea's realized output** — under a small compatibility configuration
+  (matched demographics + `--years-of-history 10` + a 1-day time step) psynthea
+  reproduces Java-Synthea's realized condition rates to within its own seed-to-seed
+  sampling noise, so it can serve as a drop-in, Java-free executor of the same modules.
+- **Optional simulation realism** (all opt-in) — approximate **vitals** (`--vitals`:
+  height/BMI/blood pressure feeding module logic), **mortality** (`--mortality`:
+  Gompertz age/sex hazard), and a **keystone** hook (`--keystone`: race/ethnicity/
+  socioeconomic status/smoking/alcohol) so demographic- and behavior-gated modules fire.
 - **Module DSL** (`psynthea.dsl`) — author disease models as typed, testable Python
   that compiles to the same engine IR as imported JSON (build-time validation).
 - **Ground-truth labels** (`--ground-truth`) — emit per-event provenance (which
